@@ -1,0 +1,471 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Label Verification — TTB Prototype</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Public+Sans:wght@400;600;800&family=IBM+Plex+Mono:wght@400;600&display=swap" rel="stylesheet" />
+<script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+<style>
+  /* ----- tokens -------------------------------------------------------- */
+  :root {
+    --ink:        #1b2a4a;   /* federal navy */
+    --paper:      #fcfcfa;
+    --panel:      #ffffff;
+    --line:       #d6d9e0;
+    --blue:       #205493;   /* USWDS primary */
+    --green:      #2e8540;   /* approve */
+    --red:        #cd2026;   /* reject */
+    --gold:       #b8860b;   /* needs review */
+    --green-bg:   #e7f4e4;
+    --red-bg:     #f9e8e8;
+    --gold-bg:    #fdf3da;
+    --radius:     6px;
+    --body:       "Public Sans", system-ui, sans-serif;
+    --mono:       "IBM Plex Mono", ui-monospace, monospace;
+  }
+  * { box-sizing: border-box; margin: 0; }
+  html { font-size: 17px; }                /* slightly large base — readability first */
+  body { font-family: var(--body); background: var(--paper); color: var(--ink); line-height: 1.5; }
+
+  /* ----- header -------------------------------------------------------- */
+  header { background: var(--ink); color: #fff; padding: 1.1rem 1.5rem; }
+  header .eyebrow { font-size: .72rem; letter-spacing: .14em; text-transform: uppercase; opacity: .75; }
+  header h1 { font-size: 1.35rem; font-weight: 800; letter-spacing: -.01em; }
+
+  main { max-width: 1240px; margin: 1.75rem auto 4rem; padding: 0 1.25rem;
+         display: grid; grid-template-columns: minmax(330px, 420px) 1fr; gap: 1.5rem; align-items: start; }
+  @media (max-width: 900px) { main { grid-template-columns: 1fr; } }
+
+  section.card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 1.4rem; }
+  h2 { font-size: .8rem; font-weight: 800; text-transform: uppercase; letter-spacing: .12em;
+       color: var(--blue); margin-bottom: .75rem; }
+  h2 + p.hint { font-size: .85rem; color: #5a6478; margin-bottom: .75rem; }
+  .sample-btn { background: none; border: none; color: var(--blue); font: inherit; font-size: .85rem;
+       text-decoration: underline; cursor: pointer; padding: 0; }
+
+  .dropzone { border: 2px dashed var(--line); border-radius: var(--radius);
+       padding: 1.25rem 1rem; text-align: center; cursor: pointer; color: #5a6478; background: #fafbfc;
+       transition: border-color .15s, background .15s; }
+  .dropzone:focus-visible { outline: 3px solid #7aa7d9; outline-offset: 1px; }
+  .dropzone.dragover { border-color: var(--blue); background: #eef4fb; }
+  .dropzone strong { color: var(--ink); }
+  .dropzone.loaded { border-style: solid; border-color: var(--green); background: var(--green-bg); }
+
+  .filelist { list-style: none; margin-top: .6rem; font-family: var(--mono); font-size: .76rem; text-align: left; }
+  .filelist li { padding: .15rem 0; word-break: break-all; }
+  .filelist li.unmatched { color: var(--red); }
+
+  .verify-btn { margin-top: 1.25rem; width: 100%; padding: .95rem; font: inherit; font-weight: 800;
+       font-size: 1.05rem; color: #fff; background: var(--blue); border: none; border-radius: var(--radius);
+       cursor: pointer; }
+  .verify-btn:hover:not(:disabled) { background: #17436f; }
+  .verify-btn:disabled { background: #9aa5b5; cursor: not-allowed; }
+  .verify-btn:focus-visible { outline: 3px solid #7aa7d9; outline-offset: 1px; }
+
+  .error-banner { margin-top: 1rem; padding: .8rem 1rem; background: var(--red-bg);
+       border-left: 4px solid var(--red); border-radius: 0 var(--radius) var(--radius) 0;
+       font-size: .92rem; display: none; }
+  .warn-banner { margin-top: 1rem; padding: .8rem 1rem; background: var(--gold-bg);
+       border-left: 4px solid var(--gold); border-radius: 0 var(--radius) var(--radius) 0;
+       font-size: .88rem; display: none; }
+
+  /* ----- batch results -------------------------------------------------- */
+  .placeholder { color: #7a8499; font-size: .95rem; }
+  .summary { display: flex; gap: .6rem; flex-wrap: wrap; margin-bottom: 1rem; }
+  .summary .pill { font-weight: 800; font-size: .82rem; padding: .35rem .8rem; border-radius: 999px; }
+  .pill.total        { background: #eef1f6; color: var(--ink); }
+  .pill.match        { background: var(--green-bg); color: var(--green); }
+  .pill.mismatch     { background: var(--red-bg); color: var(--red); }
+  .pill.needs_review { background: var(--gold-bg); color: var(--gold); }
+  .progressbar { height: 6px; background: #eef1f6; border-radius: 999px; overflow: hidden; margin-bottom: 1rem; }
+  .progressbar > div { height: 100%; width: 0%; background: var(--blue); transition: width .25s; }
+
+  details.label-row { border: 1px solid var(--line); border-radius: var(--radius); margin-bottom: .6rem;
+       background: #fff; overflow: hidden; }
+  details.label-row summary { display: grid; grid-template-columns: 1fr auto; gap: .6rem; align-items: center;
+       padding: .7rem .9rem; cursor: pointer; list-style: none; }
+  details.label-row summary::-webkit-details-marker { display: none; }
+  details.label-row summary:focus-visible { outline: 3px solid #7aa7d9; outline-offset: -3px; }
+  details.label-row[open] summary { border-bottom: 1px solid var(--line); }
+  .row-name { font-family: var(--mono); font-size: .82rem; word-break: break-all; }
+  .row-brand { font-size: .82rem; color: #5a6478; }
+  .badge { font-size: .68rem; font-weight: 800; text-transform: uppercase; letter-spacing: .08em;
+       padding: .28rem .6rem; border-radius: 999px; white-space: nowrap; justify-self: end; }
+  .badge.match        { background: var(--green-bg); color: var(--green); }
+  .badge.mismatch, .badge.not_found, .badge.error { background: var(--red-bg); color: var(--red); }
+  .badge.needs_review { background: var(--gold-bg); color: var(--gold); }
+  .badge.pending      { background: #eef1f6; color: #5a6478; }
+  .badge.processing   { background: #e3ecf7; color: var(--blue); }
+
+  .row-detail { padding: .9rem 1rem; }
+  .meta { font-size: .78rem; color: #5a6478; margin-bottom: .6rem; font-family: var(--mono); }
+
+  ul.checklist { list-style: none; }
+  ul.checklist li { display: grid; grid-template-columns: 1.8rem 1fr auto; gap: .6rem;
+       padding: .75rem 0; border-bottom: 1px solid var(--line); align-items: start; }
+  ul.checklist li:last-child { border-bottom: none; }
+  .check-icon { font-size: 1.15rem; line-height: 1.3; font-weight: 800; }
+  .check-icon.match { color: var(--green); }
+  .check-icon.mismatch, .check-icon.not_found { color: var(--red); }
+  .check-icon.needs_review { color: var(--gold); }
+  .check-body .field-name { font-weight: 800; font-size: .92rem; }
+  .check-body .values { font-size: .83rem; margin-top: .2rem; }
+  .check-body .values .v { font-family: var(--mono); }
+  .check-body .note { font-size: .83rem; color: #5a6478; margin-top: .25rem; }
+
+  .warning-text { font-family: var(--mono); font-size: .76rem; background: #f4f5f8;
+       border: 1px solid var(--line); border-radius: 4px; padding: .55rem .65rem; margin-top: .4rem;
+       white-space: pre-wrap; }
+  .issues { margin-top: .35rem; padding-left: 1.1rem; font-size: .83rem; color: var(--red); }
+  .issues li { padding: .1rem 0; border: none; display: list-item; }
+  .image-flags { margin-top: .75rem; padding: .6rem .8rem; background: var(--gold-bg);
+       border-left: 4px solid var(--gold); border-radius: 0 4px 4px 0; font-size: .85rem; }
+  .row-error { font-size: .88rem; color: var(--red); }
+
+  @media (prefers-reduced-motion: reduce) { .progressbar > div { transition: none; } }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="eyebrow">Alcohol and Tobacco Tax and Trade Bureau · Prototype</div>
+  <h1>Label Verification — Batch Review</h1>
+</header>
+
+<main>
+  <!-- ================= left: inputs ================= -->
+  <section class="card" aria-labelledby="step1">
+    <h2 id="step1">1 · Application data (CSV)</h2>
+    <p class="hint">One row per label. Columns: <code>image_file, brand_name, class_type,
+    alcohol_content, net_contents</code>. Rows are matched to images by filename.</p>
+    <div class="dropzone" id="csv-zone" tabindex="0" role="button" aria-label="Upload application CSV">
+      <span id="csv-empty"><strong>Drag the CSV here</strong><br/>or click to browse</span>
+      <ul class="filelist" id="csv-status"></ul>
+      <input type="file" id="csv-input" accept=".csv,text/csv" hidden />
+    </div>
+    <button type="button" class="sample-btn" id="sample-csv">Download a sample CSV</button>
+
+    <h2 style="margin-top:1.5rem" id="step2">2 · Label images</h2>
+    <p class="hint">Select all the label images for this batch — one image per application row.</p>
+    <div class="dropzone" id="img-zone" tabindex="0" role="button" aria-label="Upload label images">
+      <span id="img-empty"><strong>Drag the label images here</strong><br/>or click to browse — JPEG, PNG, or WebP</span>
+      <ul class="filelist" id="img-status"></ul>
+      <input type="file" id="img-input" accept="image/jpeg,image/png,image/webp" multiple hidden />
+    </div>
+
+    <button type="button" class="verify-btn" id="verify-btn">Verify batch</button>
+    <div class="warn-banner" id="warn-banner" role="alert"></div>
+    <div class="error-banner" id="error-banner" role="alert"></div>
+  </section>
+
+  <!-- ================= right: results ================= -->
+  <section class="card" aria-labelledby="step3">
+    <h2 id="step3">3 · Review results</h2>
+    <div id="results" aria-live="polite">
+      <p class="placeholder">Upload the application CSV and the label images, then select
+      <strong>Verify batch</strong>. Each label is checked against its application row, and the
+      government warning statement is checked word for word against the text required by
+      27 CFR Part 16. Results appear as each label finishes — open a row for the full checklist.</p>
+    </div>
+  </section>
+</main>
+
+<script>
+(() => {
+  "use strict";
+
+  const $ = (id) => document.getElementById(id);
+  const FIELDS = ["brand_name", "class_type", "alcohol_content", "net_contents"];
+  const CSV_COLUMNS = ["image_file", ...FIELDS];
+
+  const STATUS_LABEL = { match: "No issues", mismatch: "Issues found", not_found: "Not found",
+                         needs_review: "Needs review", pending: "Waiting", processing: "Checking…",
+                         error: "Error" };
+  const STATUS_ICON  = { match: "✓", mismatch: "✕", not_found: "✕", needs_review: "!" };
+
+  /* Gemini's free tier allows 15 requests/minute, so the batch runs with
+     limited concurrency and retries once on a rate-limit response. */
+  const CONCURRENCY = 3;
+  const RETRY_DELAY_MS = 5000;
+
+  let applications = new Map();   // filename (lowercased) -> {row data}
+  let images = new Map();         // filename (lowercased) -> File
+  let running = false;
+
+  /* ---------- sample CSV ---------- */
+  $("sample-csv").addEventListener("click", () => {
+    const csv = [
+      CSV_COLUMNS.join(","),
+      'old_tom.jpg,OLD TOM DISTILLERY,Kentucky Straight Bourbon Whiskey,"45% Alc./Vol. (90 Proof)",750 mL',
+      'stones_throw.png,"Stone\'s Throw",Straight Rye Whiskey,"50% Alc./Vol. (100 Proof)",750 mL',
+    ].join("\n");
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
+    a.download = "applications_sample.csv";
+    a.click();
+    URL.revokeObjectURL(a.href);
+  });
+
+  /* ---------- dropzone wiring ---------- */
+  function wireZone(zoneId, inputId, onFiles) {
+    const zone = $(zoneId), input = $(inputId);
+    zone.addEventListener("click", () => !running && input.click());
+    zone.addEventListener("keydown", (e) => {
+      if ((e.key === "Enter" || e.key === " ") && !running) { e.preventDefault(); input.click(); }
+    });
+    input.addEventListener("change", () => input.files.length && onFiles([...input.files]));
+    ["dragover", "dragleave", "drop"].forEach((evt) =>
+      zone.addEventListener(evt, (e) => {
+        e.preventDefault();
+        zone.classList.toggle("dragover", evt === "dragover");
+        if (evt === "drop" && !running && e.dataTransfer.files.length) onFiles([...e.dataTransfer.files]);
+      })
+    );
+  }
+
+  /* ---------- CSV handling ---------- */
+  wireZone("csv-zone", "csv-input", ([file]) => {
+    Papa.parse(file, {
+      header: true,
+      skipEmptyLines: "greedy",
+      transformHeader: (h) => h.trim().toLowerCase(),
+      complete: (res) => loadCsv(file.name, res),
+      error: () => showError("That CSV could not be read."),
+    });
+  });
+
+  function loadCsv(name, res) {
+    const headers = res.meta.fields || [];
+    const missing = CSV_COLUMNS.filter((c) => !headers.includes(c));
+    if (missing.length) {
+      return showError(`The CSV is missing required column(s): ${missing.join(", ")}. ` +
+                       `Use "Download a sample CSV" to see the expected format.`);
+    }
+    showError(null);
+    applications = new Map();
+    const problems = [];
+    res.data.forEach((row, i) => {
+      const key = (row.image_file || "").trim().toLowerCase();
+      if (!key) return problems.push(`Row ${i + 2}: missing image_file.`);
+      const blank = FIELDS.filter((f) => !(row[f] || "").trim());
+      if (blank.length) return problems.push(`Row ${i + 2} (${key}): blank ${blank.join(", ")}.`);
+      if (applications.has(key)) problems.push(`Row ${i + 2}: duplicate image_file "${key}" — using the last one.`);
+      const app = {};
+      FIELDS.forEach((f) => (app[f] = row[f].trim()));
+      applications.set(key, app);
+    });
+    $("csv-zone").classList.toggle("loaded", applications.size > 0);
+    $("csv-empty").hidden = applications.size > 0;
+    $("csv-status").innerHTML = applications.size
+      ? `<li><strong>${esc(name)}</strong> — ${applications.size} application${applications.size === 1 ? "" : "s"} loaded</li>`
+      : "";
+    showWarn(problems.length ? problems.join(" ") : null);
+    refreshMatching();
+  }
+
+  /* ---------- image handling ---------- */
+  wireZone("img-zone", "img-input", (files) => {
+    const rejected = [];
+    for (const f of files) {
+      if (/^image\/(jpeg|png|webp)$/.test(f.type)) images.set(f.name.toLowerCase(), f);
+      else rejected.push(f.name);
+    }
+    if (rejected.length) showWarn(`Skipped (not JPEG/PNG/WebP): ${rejected.join(", ")}`);
+    refreshMatching();
+  });
+
+  function refreshMatching() {
+    const list = $("img-status");
+    $("img-zone").classList.toggle("loaded", images.size > 0);
+    $("img-empty").hidden = images.size > 0;
+    if (!images.size) { list.innerHTML = ""; return; }
+    list.innerHTML = [...images.keys()].map((k) => {
+      const ok = applications.has(k);
+      return `<li class="${ok ? "" : "unmatched"}">${ok ? "✓" : "✕"} ${esc(k)}${ok ? "" : " — no matching CSV row"}</li>`;
+    }).join("");
+  }
+
+  /* ---------- client-side resize ----------
+     Keeps each request small (serverless body limits) and the model call
+     fast — the latency budget is ~5 s per label. */
+  const MAX_DIM = 1600;
+  function resizeImage(file) {
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => {
+        const scale = Math.min(1, MAX_DIM / Math.max(img.width, img.height));
+        if (scale === 1 && file.size < 1.5 * 1024 * 1024) return resolve(file);
+        const canvas = document.createElement("canvas");
+        canvas.width = Math.round(img.width * scale);
+        canvas.height = Math.round(img.height * scale);
+        canvas.getContext("2d").drawImage(img, 0, 0, canvas.width, canvas.height);
+        canvas.toBlob(
+          (b) => (b ? resolve(new File([b], "label.jpg", { type: "image/jpeg" })) : reject(new Error("Resize failed."))),
+          "image/jpeg", 0.85
+        );
+      };
+      img.onerror = () => reject(new Error("File could not be read as an image."));
+      img.src = URL.createObjectURL(file);
+    });
+  }
+
+  /* ---------- batch run ---------- */
+  $("verify-btn").addEventListener("click", async () => {
+    showError(null);
+    if (!applications.size) return showError("Upload the application CSV first.");
+    if (!images.size) return showError("Upload the label images first.");
+
+    const queue = [...images.keys()].filter((k) => applications.has(k))
+      .map((k) => ({ key: k, file: images.get(k), app: applications.get(k) }));
+    if (!queue.length) return showError("None of the uploaded images match an image_file in the CSV.");
+
+    const orphanImages = [...images.keys()].filter((k) => !applications.has(k));
+    const orphanRows = [...applications.keys()].filter((k) => !images.has(k));
+    const warnings = [];
+    if (orphanImages.length) warnings.push(`Skipping ${orphanImages.length} image(s) with no CSV row.`);
+    if (orphanRows.length) warnings.push(`${orphanRows.length} CSV row(s) have no uploaded image: ${orphanRows.join(", ")}.`);
+    showWarn(warnings.length ? warnings.join(" ") : null);
+
+    running = true;
+    $("verify-btn").disabled = true;
+    $("verify-btn").textContent = "Checking batch…";
+    renderQueue(queue);
+
+    let next = 0, done = 0;
+    const counts = { match: 0, mismatch: 0, needs_review: 0, error: 0 };
+
+    async function worker() {
+      while (next < queue.length) {
+        const item = queue[next++];
+        setRowStatus(item.key, "processing");
+        const outcome = await verifyOne(item);
+        counts[outcome] = (counts[outcome] || 0) + 1;
+        done++;
+        updateSummary(counts, done, queue.length);
+      }
+    }
+    await Promise.all(Array.from({ length: Math.min(CONCURRENCY, queue.length) }, worker));
+
+    running = false;
+    $("verify-btn").disabled = false;
+    $("verify-btn").textContent = "Verify batch";
+  });
+
+  async function verifyOne(item, attempt = 1) {
+    try {
+      const image = await resizeImage(item.file);
+      const form = new FormData();
+      form.append("image", image);
+      FIELDS.forEach((f) => form.append(f, item.app[f]));
+      const res = await fetch("/api/verify", { method: "POST", body: form });
+      if (res.status === 429 || res.status === 502) {
+        if (attempt === 1) {           // rate-limited — wait and retry once
+          await new Promise((r) => setTimeout(r, RETRY_DELAY_MS));
+          return verifyOne(item, 2);
+        }
+        throw new Error("The verification service is busy. Try this label again shortly.");
+      }
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error || "Verification failed.");
+      renderRowResult(item.key, body);
+      return body.image_readable ? body.overall : "needs_review";
+    } catch (err) {
+      renderRowError(item.key, err.message || "Verification failed.");
+      return "error";
+    }
+  }
+
+  /* ---------- banners ---------- */
+  function showError(msg) { const b = $("error-banner"); b.style.display = msg ? "block" : "none"; b.textContent = msg || ""; }
+  function showWarn(msg)  { const b = $("warn-banner");  b.style.display = msg ? "block" : "none"; b.textContent = msg || ""; }
+
+  /* ---------- rendering ---------- */
+  const esc = (s) =>
+    String(s ?? "").replace(/[&<>"']/g, (c) =>
+      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  const rowId = (key) => "row-" + btoa(unescape(encodeURIComponent(key))).replace(/[^a-zA-Z0-9]/g, "");
+
+  function renderQueue(queue) {
+    let html = `<div class="summary" id="summary"><span class="pill total">0 / ${queue.length} checked</span></div>
+      <div class="progressbar"><div id="progress"></div></div>`;
+    for (const item of queue) {
+      html += `<details class="label-row" id="${rowId(item.key)}">
+        <summary>
+          <span><span class="row-name">${esc(item.key)}</span><br/>
+                <span class="row-brand">${esc(item.app.brand_name)}</span></span>
+          <span class="badge pending" data-badge>${STATUS_LABEL.pending}</span>
+        </summary>
+        <div class="row-detail" data-detail><p class="placeholder">Waiting…</p></div>
+      </details>`;
+    }
+    $("results").innerHTML = html;
+  }
+
+  function setRowStatus(key, status) {
+    const badge = document.querySelector(`#${rowId(key)} [data-badge]`);
+    badge.className = `badge ${status}`;
+    badge.textContent = STATUS_LABEL[status];
+  }
+
+  function updateSummary(counts, done, total) {
+    $("progress").style.width = `${(done / total) * 100}%`;
+    const pills = [`<span class="pill total">${done} / ${total} checked</span>`];
+    if (counts.match)        pills.push(`<span class="pill match">${counts.match} no issues</span>`);
+    if (counts.mismatch)     pills.push(`<span class="pill mismatch">${counts.mismatch} with issues</span>`);
+    if (counts.needs_review) pills.push(`<span class="pill needs_review">${counts.needs_review} need review</span>`);
+    if (counts.error)        pills.push(`<span class="pill mismatch">${counts.error} failed</span>`);
+    $("summary").innerHTML = pills.join("");
+  }
+
+  function checklistItem(name, bodyHtml, status) {
+    return `<li>
+      <span class="check-icon ${status}" aria-hidden="true">${STATUS_ICON[status]}</span>
+      <div class="check-body"><div class="field-name">${esc(name)}</div>${bodyHtml}</div>
+      <span class="badge ${status}">${STATUS_LABEL[status] || status}</span>
+    </li>`;
+  }
+
+  function renderRowResult(key, r) {
+    const detail = document.querySelector(`#${rowId(key)} [data-detail]`);
+
+    if (!r.image_readable) {
+      setRowStatus(key, "needs_review");
+      detail.innerHTML = `<div class="image-flags"><strong>Image could not be reviewed.</strong>
+        ${esc(r.image_issues.join(" "))} Ask the applicant for a clearer image.</div>`;
+      return;
+    }
+
+    setRowStatus(key, r.overall);
+    let html = `<div class="meta">Processed in ${r.processing_seconds}s · ${esc(r.model)}</div><ul class="checklist">`;
+    for (const f of r.fields) {
+      const values =
+        f.found === null
+          ? `<div class="values">Application: <span class="v">${esc(f.expected)}</span></div>`
+          : `<div class="values">Application: <span class="v">${esc(f.expected)}</span><br/>
+             On label: <span class="v">${esc(f.found)}</span></div>`;
+      const note = f.note ? `<div class="note">${esc(f.note)}</div>` : "";
+      html += checklistItem(f.field, values + note, f.status);
+    }
+    const w = r.government_warning;
+    let wBody = "";
+    if (w.extracted_text) wBody += `<div class="warning-text">${esc(w.extracted_text)}</div>`;
+    if (w.issues.length) wBody += `<ul class="issues">${w.issues.map((i) => `<li>${esc(i)}</li>`).join("")}</ul>`;
+    html += checklistItem("Government warning statement", wBody, w.status) + `</ul>`;
+    if (r.image_issues.length) {
+      html += `<div class="image-flags"><strong>Image quality:</strong> ${esc(r.image_issues.join(" "))}</div>`;
+    }
+    detail.innerHTML = html;
+  }
+
+  function renderRowError(key, message) {
+    setRowStatus(key, "error");
+    document.querySelector(`#${rowId(key)} [data-detail]`).innerHTML =
+      `<p class="row-error">${esc(message)}</p>`;
+  }
+})();
+</script>
+</body>
+</html>
