@@ -6,7 +6,7 @@ the matching label images (matched by filename), and gets a per-label
 review checklist as each one finishes — including a word-for-word check
 of the mandatory government health warning.
 
-**Live demo:** _add your Vercel URL here_
+**Live demo:** https://cola-label-checker.vercel.app/
 
 ## How it works
 
