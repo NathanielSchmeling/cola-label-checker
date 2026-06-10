@@ -154,11 +154,15 @@ vercel.json
   practice post-resize images are 300–800 KB and never approach it.
 - **Free-tier Gemini.** Google's free AI Studio tier may use submitted
   data for training — fine for synthetic test labels, not for production.
-  A production deployment inside TTB's network would need a
-  FedRAMP-authorized endpoint (e.g. Gemini on Google Cloud Assured
-  Workloads or an Azure-hosted model, given the agency's Azure footprint).
-  The model call is isolated in `verifier.py` so the provider is
-  swappable.
+  The free tier occasionally returns 503 errors under high demand — the UI
+  surfaces a clear message so agents know to retry rather than assume a bug.
+  Concurrency is capped at 3 (`CONCURRENCY` in `static/index.html`) to stay
+  under the 15 requests/minute free-tier limit; a paid key supports 10+
+  concurrent requests and still costs pennies per label. A production
+  deployment inside TTB's network would need a FedRAMP-authorized endpoint
+  (e.g. Gemini on Google Cloud Assured Workloads or an Azure-hosted model,
+  given the agency's Azure footprint). The model call is isolated in
+  `verifier.py` so the provider is swappable.
 - **No auth or rate limiting.** Out of scope for a prototype that stores
   nothing and handles no PII.
 - **Vercel serverless.** Chosen for zero-cost hosting with ~1s cold
