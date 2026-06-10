@@ -120,7 +120,7 @@ The `cola_samples/` directory contains everything you need to run a test
 batch immediately:
 
 - `sample_labels.csv` — three applications (bourbon, vodka, wine)
-- `bottle_bourbon_01.png`, `bottle_vodka_02.png`, `bottle_wine_03.png` — matching label images
+- `bottle_bourbon_01.png`, `bottle_vodka_02.png`, `bottle_wine_03.png`, `bottle_gin_04.png` — matching label images
 
 Upload `sample_labels.csv` as the application CSV and all three images as
 the label images, then click **Verify batch**.
