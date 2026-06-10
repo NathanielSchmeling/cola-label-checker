@@ -16,9 +16,11 @@ logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
 try:  # Vercel imports this file as a top-level module; locally it's a package.
-    from api.verifier import ApplicationData, VerificationResult, verify_label
+    from api.models import ApplicationData, VerificationResult
+    from api.verifier import verify_label
 except ImportError:  # pragma: no cover
-    from verifier import ApplicationData, VerificationResult, verify_label
+    from models import ApplicationData, VerificationResult
+    from verifier import verify_label
 
 STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
 
