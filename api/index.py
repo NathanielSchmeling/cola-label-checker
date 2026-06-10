@@ -74,12 +74,11 @@ async def verify(
     except RuntimeError as exc:  # missing API key, etc.
         logger.exception("RuntimeError in verify_label")
         raise HTTPException(500, str(exc))
-    except Exception:
+    except Exception as exc:
         logger.exception("Unexpected error in verify_label")
-        raise HTTPException(
-            502,
-            "The verification service could not process this image. Please try again.",
-        )
+        if "503" in str(exc) or "UNAVAILABLE" in str(exc):
+            raise HTTPException(503, "Gemini is temporarily unavailable — please try again in a moment.")
+        raise HTTPException(502, "The verification service could not process this image. Please try again.")
 
 
 @app.exception_handler(HTTPException)
