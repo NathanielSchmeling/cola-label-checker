@@ -6,7 +6,7 @@ the matching label images (matched by filename), and gets a per-label
 review checklist as each one finishes — including a word-for-word check
 of the mandatory government health warning.
 
-**Live demo:** https://cola-label-checker.vercel.app/
+**Live demo:** _add your Vercel URL here_
 
 ## How it works
 
@@ -116,15 +116,20 @@ the binaries have the correct executable paths.
 
 ## Testing it
 
-Use **Download a sample CSV** in the UI, generate label images named to
-match its `image_file` values, and upload both. Real approved label
-images are available from the TTB Public COLA Registry at
-ttbonline.gov/colasonline — useful for adversarial testing.
+The `cola_samples/` directory contains everything you need to run a test
+batch immediately:
 
-Good test cases: correct label (should pass), wrong ABV, title-case
-"Government Warning", missing warning entirely, glare/angle photo,
-image with no CSV row (skipped with a warning), CSV row with no image
-(flagged before the batch runs).
+- `sample_labels.csv` — three applications (bourbon, vodka, wine)
+- `bottle_bourbon_01.png`, `bottle_vodka_02.png`, `bottle_wine_03.png` — matching label images
+
+Upload `sample_labels.csv` as the application CSV and all three images as
+the label images, then click **Verify batch**.
+
+For adversarial testing, real approved label images are available from the
+TTB Public COLA Registry at ttbonline.gov/colasonline. Good test cases:
+wrong ABV on a label, title-case "Government Warning", missing warning
+entirely, glare/angle photo, an image with no CSV row (skipped with a
+warning), a CSV row with no image (flagged before the batch runs).
 
 ## File structure
 
