@@ -78,6 +78,8 @@ async def verify(
         logger.exception("Unexpected error in verify_label")
         if "503" in str(exc) or "UNAVAILABLE" in str(exc):
             raise HTTPException(503, "Gemini is temporarily unavailable — please try again in a moment.")
+        if "RESOURCE_EXHAUSTED" in str(exc) or "429" in str(exc):
+            raise HTTPException(429, "Gemini daily limit reached — resets at midnight Pacific time. Try again tomorrow.")
         raise HTTPException(502, "The verification service could not process this image. Please try again.")
 
 
