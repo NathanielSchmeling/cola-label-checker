@@ -406,12 +406,13 @@
       form.append("image", image);
       FIELDS.forEach((f) => form.append(f, item.app[f]));
       const res = await fetch("/api/verify", { method: "POST", body: form });
-      if (res.status === 429 || res.status === 502) {
-        if (attempt === 1) {           // rate-limited — wait and retry once
+      if (res.status === 429 || res.status === 502 || res.status === 503) {
+        if (attempt === 1) {           // rate-limited or Gemini busy — wait and retry once
           await new Promise((r) => setTimeout(r, RETRY_DELAY_MS));
           return verifyOne(item, 2);
         }
-        throw new Error("The verification service is busy. Try this label again shortly.");
+        const body503 = await res.json().catch(() => ({}));
+        throw new Error(body503.error || "Gemini is temporarily unavailable — please try again shortly.");
       }
       const body = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(body.error || "Verification failed.");
