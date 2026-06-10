@@ -1,11 +1,10 @@
 # TTB Label Verification — Prototype
 
-AI-powered tool that batch-checks alcohol beverage label images against their
-COLA application data. An agent uploads a CSV of applications and the matching
-label images (matched by filename), and gets a per-label review checklist as
-each one finishes — including a word-for-word check of the mandatory
-government health warning. Batches were the headline request from the
-compliance team: big importers submit 200–300 applications at once.
+AI-powered tool that batch-checks alcohol beverage label images against
+their COLA application data. An agent uploads a CSV of applications and
+the matching label images (matched by filename), and gets a per-label
+review checklist as each one finishes — including a word-for-word check
+of the mandatory government health warning.
 
 **Live demo:** _add your Vercel URL here_
 
@@ -13,119 +12,164 @@ compliance team: big importers submit 200–300 applications at once.
 
 ```
 applications.csv ─┐
-                  ├─▶ Browser matches rows to images by filename, then for
-label images ────┘    each pair (3 at a time):
+                  ├─▶ Browser matches rows to images by filename, then
+label images ────┘    for each pair (3 at a time):
                             │
                             ▼  resized image + application fields
-                        FastAPI ──▶ Gemini 2.5 Flash (extracts label text
-                            │        + fuzzy comparisons, structured JSON)
+                        FastAPI ──▶ Gemini 2.5 Flash
+                            │        (extracts label text, structured JSON)
+                            ▼
+                        rules.py
+                            │  (Python applies compliance rules)
                             ▼
                   per-label checklist streams into the results panel
 ```
 
 1. The CSV has one row per label: `image_file, brand_name, class_type,
-   alcohol_content, net_contents`. The UI offers a sample CSV download and
-   flags unmatched rows/images before anything runs.
-2. The frontend resizes each image client-side (max 1600 px, JPEG) and sends
-   each (image, application row) pair as its own request, three at a time.
-3. One Gemini vision call per label extracts the fields verbatim and makes
-   fuzzy equivalence judgments (structured output, temperature 0, thinking
-   disabled for latency).
-4. Python turns that into per-field results, and performs the **government
-   warning check deterministically in code** — see below.
+   alcohol_content, net_contents`. The UI offers a sample CSV download
+   and flags unmatched rows/images before anything runs.
+2. The frontend resizes each image client-side (max 1600px, JPEG) and
+   sends each (image, application row) pair as its own request, three
+   at a time.
+3. One Gemini vision call per label extracts the fields from the image.
+4. Python applies the compliance rules and returns a per-field result.
 
-### Why the browser orchestrates the batch
+### Design principle: LLM for extraction, Python for rules
 
-Each serverless invocation handles exactly one label, so a 300-label batch
-can never hit a function timeout; results stream in per label instead of
-blocking on the whole batch; and one bad image fails one row, not the run.
-Concurrency is capped at 3 with a single retry on rate-limit responses,
-because Gemini's free tier allows 15 requests/minute — a paid key raises
-that limit and the same code simply runs wider.
+Gemini's job is to read the label image and extract raw values — it
+handles the visual noise (stylised fonts, curved bottle text, glare,
+bad angles) that traditional OCR can't. For numeric fields like ABV and
+net contents it also normalises both the label value and the application
+value into a common form so formatting variants ("45% Alc./Vol. (90 Proof)"
+vs "45% ALC/VOL") never cause false failures.
 
-### Key design decision: LLM for judgment, code for law
+Python's job is to apply the compliance rules deterministically:
+- Brand name and class/type: case-insensitive string match
+- ABV and net contents: numeric equality on the normalised values
+- Government warning body: verbatim match (whitespace-normalised)
+- Government warning header: must start with "GOVERNMENT WARNING:"
+  in all caps per 27 CFR 16.22
 
-Two of the requirements pull in opposite directions:
+Legally exact requirements are never left to model judgment. The model
+surfaces an optional note on anything it observes about each field;
+that note is shown to the agent for context but does not affect the
+pass/fail decision.
 
-- Brand-name matching needs *judgment*: `STONE'S THROW` on a label vs
-  `Stone's Throw` in an application is obviously the same brand. The model
-  is asked to judge equivalence, and its reasoning is surfaced as a note so
-  the agent always sees *why*.
-- The government warning (27 CFR 16.21) must be *exact*: verbatim wording,
-  with `GOVERNMENT WARNING:` in capital letters. A legally exact requirement
-  shouldn't depend on a model's judgment, so Gemini only transcribes the
-  warning character-for-character; Python compares it to the canonical text
-  (whitespace-normalized, case-sensitive) and separately checks the all-caps
-  header. A title-case "Government Warning" is flagged as a mismatch.
-  Boldness of the header can't be verified from a transcription, so the model
-  reports a best-effort judgment; if it can't tell, the result says
-  "verify visually" rather than silently passing.
+### Government warning check
+
+27 CFR 16.21/16.22 requires the warning verbatim with "GOVERNMENT
+WARNING:" in capital letters and bold. The check has two independent
+parts:
+
+- **Body** — verbatim match after whitespace normalisation. Wrong
+  wording or capitalization in the body → mismatch.
+- **Header** — must be present and read "GOVERNMENT WARNING:" in all
+  caps. Title case → mismatch. Header not detected in the transcription
+  → needs review (flagged for the agent to verify visually, since the
+  model may have omitted it from the transcription).
+
+Bold detection is best-effort: if the model can't confirm the header
+is bold, the result says "verify visually" rather than silently passing.
+
+### Needs review
+
+A label is flagged **needs review** (rather than pass or fail) when the
+tool detects a potential issue but cannot make a definitive call — for
+example, the warning body is correct but the header wasn't found in the
+transcription, or the image quality is too poor to read reliably. The
+agent sees the specific reason and makes the final call. In a production
+system these would route to a separate queue; for the prototype the agent
+simply opens the row and reads the note.
 
 ### Performance
 
-The prior vendor pilot failed because results took 30–40 s. This prototype
-makes exactly one model call per label with thinking disabled; typical
-end-to-end time is **2–4 seconds**, and the elapsed time is shown with every
-result so slowness is never invisible.
+The prior vendor pilot failed because results took 30–40s per label.
+This prototype makes exactly one model call per label with thinking
+disabled; typical end-to-end time is **2–4 seconds**. The elapsed time
+is shown with every result so slowness is never invisible.
+
+The free Gemini tier occasionally returns 503 (high demand) — these are
+temporary and the UI surfaces a clear message to retry rather than a
+generic error.
 
 ## Run locally
 
 ```bash
 git clone <repo>
-cd label-checker
-python -m venv .venv && source .venv/bin/activate
+cd cola-label-checker
+python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 export GEMINI_API_KEY=...        # free key from https://aistudio.google.com
 uvicorn api.index:app --reload
 # open http://127.0.0.1:8000
 ```
 
+**WSL users:** create the venv from inside WSL (not from Windows) so
+the binaries have the correct executable paths.
+
 ## Deploy (Vercel)
 
-1. Push this repo to GitHub and import it at vercel.com (framework: Other —
-   `vercel.json` routes everything to the FastAPI app).
+1. Push this repo to GitHub and import it at vercel.com
+   (framework: Other — `vercel.json` routes everything to the FastAPI app).
 2. Add `GEMINI_API_KEY` under Project → Settings → Environment Variables.
-3. Deploy. Done — no Docker, no build configuration.
+3. Deploy. No Docker, no build configuration needed.
 
 ## Testing it
 
 Use **Download a sample CSV** in the UI, generate label images named to
-match its `image_file` values, and upload both. Good adversarial tests:
-wrong ABV on a label, a title-case "Government Warning", a missing warning
-entirely, a glare-heavy photo, an image with no CSV row (skipped with a
-warning), a CSV row with no image (flagged).
+match its `image_file` values, and upload both. Real approved label
+images are available from the TTB Public COLA Registry at
+ttbonline.gov/colasonline — useful for adversarial testing.
+
+Good test cases: correct label (should pass), wrong ABV, title-case
+"Government Warning", missing warning entirely, glare/angle photo,
+image with no CSV row (skipped with a warning), CSV row with no image
+(flagged before the batch runs).
+
+## File structure
+
+```
+api/
+├── index.py      # FastAPI routing and request validation
+├── verifier.py   # Orchestration — calls Gemini then calls rules
+├── rules.py      # All compliance matching logic
+└── models.py     # Shared Pydantic models
+static/
+└── index.html    # Entire frontend (HTML + CSS + JS)
+requirements.txt
+vercel.json
+```
 
 ## Assumptions and trade-offs
 
-- **Filename matching.** Rows and images are matched by filename
-  (case-insensitive). This keeps the CSV format obvious for non-technical
-  agents; a production system would match on COLA application IDs instead.
-- **Free-tier rate limits.** At 15 requests/minute, a 300-label batch takes
-  ~20 minutes on the free Gemini tier. The architecture is already parallel;
-  a paid key (still pennies per label) makes the same batch take ~2 minutes.
-- **Field set.** Brand name, class/type, alcohol content, net contents, and
-  the warning — the core matching work agents described. Bottler
+- **CSV format.** Application data is submitted as a CSV for the
+  prototype. In production this would pull directly from COLAs Online
+  (TTB Form 5100.31) rather than requiring agents to export a CSV.
+  Filename matching would be replaced by COLA application ID matching.
+- **Field set.** Brand name, class/type, alcohol content, net contents,
+  and the government warning — the core fields agents described. Bottler
   name/address and country of origin would be added the same way.
-- **Free-tier Gemini.** Google's free AI Studio tier may use submitted data
-  for training; fine for synthetic test labels, not for production. A real
-  deployment inside TTB's network would need a FedRAMP-authorized endpoint
-  (e.g. Gemini on Google Cloud's Assured Workloads or an Azure-hosted
-  model, given the agency's Azure footprint) — the model call is isolated
-  in `api/verifier.py` precisely so the provider is swappable.
+- **Image size.** Images are resized client-side to 1600px max before
+  upload. The 4 MB backend limit is a Vercel serverless constraint; in
+  practice post-resize images are 300–800 KB and never approach it.
+- **Free-tier Gemini.** Google's free AI Studio tier may use submitted
+  data for training — fine for synthetic test labels, not for production.
+  A production deployment inside TTB's network would need a
+  FedRAMP-authorized endpoint (e.g. Gemini on Google Cloud Assured
+  Workloads or an Azure-hosted model, given the agency's Azure footprint).
+  The model call is isolated in `verifier.py` so the provider is
+  swappable.
 - **No auth or rate limiting.** Out of scope for a prototype that stores
-  nothing and handles no PII. The endpoint validates content type and caps
-  uploads at 4 MB.
-- **Vercel serverless.** Chosen for zero-cost hosting with ~1 s cold starts
-  (the prior pilot died on latency, so a host with 30 s+ cold starts was
-  ruled out). Trade-off: no persistent process, so no server-side caching —
-  acceptable at prototype volume.
+  nothing and handles no PII.
+- **Vercel serverless.** Chosen for zero-cost hosting with ~1s cold
+  starts. Trade-off: no persistent process, so no server-side caching.
 - **Bold detection is best-effort.** Whether text is bold is a visual
-  property a transcription can't prove; the tool flags uncertainty instead
-  of guessing.
+  property a transcription can't prove; the tool flags uncertainty
+  instead of guessing.
 
 ## Stack
 
-FastAPI · Gemini 2.5 Flash (structured output) · vanilla HTML/JS ·
-Vercel serverless. No frontend framework — the audience is compliance
-agents, not developers, and the UI is a single page with two panels and one
-button by design.
+FastAPI · Gemini 2.5 Flash · vanilla HTML/JS · Vercel serverless.
+No frontend framework — the audience is compliance agents, not
+developers, and the UI is a single page with two panels and one button
+by design.
