@@ -126,6 +126,15 @@
   .row-error { font-size: .88rem; color: var(--red); }
 
   @media (prefers-reduced-motion: reduce) { .progressbar > div { transition: none; } }
+
+  .action-row { display: flex; gap: .6rem; margin-top: 1rem; }
+  .action-row button { flex: 1; padding: .7rem; font: inherit; font-weight: 800; font-size: .9rem;
+       border: none; border-radius: var(--radius); cursor: pointer; }
+  .reset-btn  { background: #eef1f6; color: var(--ink); }
+  .reset-btn:hover  { background: #dde2ec; }
+  .export-btn { background: var(--green-bg); color: var(--green); }
+  .export-btn:hover { background: #d0eacc; }
+  .action-row button:disabled { opacity: .45; cursor: not-allowed; }
 </style>
 </head>
 <body>
@@ -164,7 +173,11 @@
   <!-- ================= right: results ================= -->
   <section class="card" aria-labelledby="step3">
     <h2 id="step3">3 · Review results</h2>
-    <div id="results" aria-live="polite">
+    <div class="action-row">
+      <button type="button" class="reset-btn" id="reset-btn" disabled>New batch</button>
+      <button type="button" class="export-btn" id="export-btn" disabled>Export CSV</button>
+    </div>
+    <div id="results" aria-live="polite" style="margin-top:1rem">
       <p class="placeholder">Upload the application CSV and the label images, then select
       <strong>Verify batch</strong>. Each label is checked against its application row, and the
       government warning statement is checked word for word against the text required by
@@ -194,6 +207,7 @@
   let applications = new Map();   // filename (lowercased) -> {row data}
   let images = new Map();         // filename (lowercased) -> File
   let running = false;
+  let batchResults = [];   // {key, brand, overall, fields, warning, image_readable, image_issues} per label
 
   /* ---------- sample CSV ---------- */
   $("sample-csv").addEventListener("click", () => {
@@ -207,6 +221,32 @@
     a.download = "applications_sample.csv";
     a.click();
     URL.revokeObjectURL(a.href);
+  });
+
+  /* ---------- reset ---------- */
+  $("reset-btn").addEventListener("click", () => {
+    applications = new Map();
+    images = new Map();
+    batchResults = [];
+    // reset CSV zone
+    $("csv-empty").hidden = false;
+    $("csv-status").innerHTML = "";
+    $("csv-zone").classList.remove("loaded");
+    $("csv-input").value = "";
+    // reset image zone
+    $("img-empty").hidden = false;
+    $("img-status").innerHTML = "";
+    $("img-zone").classList.remove("loaded");
+    $("img-input").value = "";
+    // reset results
+    $("results").innerHTML = `<p class="placeholder">Upload the application CSV and the label images, then select
+      <strong>Verify batch</strong>. Each label is checked against its application row, and the
+      government warning statement is checked word for word against the text required by
+      27 CFR Part 16. Results appear as each label finishes — open a row for the full checklist.</p>`;
+    $("reset-btn").disabled = true;
+    $("export-btn").disabled = true;
+    showError(null);
+    showWarn(null);
   });
 
   /* ---------- dropzone wiring ---------- */
@@ -330,8 +370,11 @@
     showWarn(warnings.length ? warnings.join(" ") : null);
 
     running = true;
+    batchResults = [];
     $("verify-btn").disabled = true;
     $("verify-btn").textContent = "Checking batch…";
+    $("reset-btn").disabled = true;
+    $("export-btn").disabled = true;
     renderQueue(queue);
 
     let next = 0, done = 0;
@@ -352,6 +395,8 @@
     running = false;
     $("verify-btn").disabled = false;
     $("verify-btn").textContent = "Verify batch";
+    $("reset-btn").disabled = false;
+    $("export-btn").disabled = batchResults.length === 0;
   });
 
   async function verifyOne(item, attempt = 1) {
@@ -371,12 +416,58 @@
       const body = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(body.error || "Verification failed.");
       renderRowResult(item.key, body);
+      batchResults.push({ key: item.key, brand: item.app.brand_name, result: body });
       return body.image_readable ? body.overall : "needs_review";
     } catch (err) {
       renderRowError(item.key, err.message || "Verification failed.");
+      batchResults.push({ key: item.key, brand: item.app.brand_name, result: null, error: err.message });
       return "error";
     }
   }
+
+  /* ---------- export CSV ---------- */
+  $("export-btn").addEventListener("click", () => {
+    const rows = [["image_file", "brand_name", "result"]];
+    for (const { key, brand, result, error } of batchResults) {
+      if (error) {
+        rows.push([key, brand, `error: ${error}`]);
+        continue;
+      }
+      const r = result;
+      if (!r.image_readable) {
+        rows.push([key, brand, `needs_review: image unreadable — ${r.image_issues.join("; ")}`]);
+        continue;
+      }
+      if (r.overall === "match") {
+        rows.push([key, brand, "pass"]);
+        continue;
+      }
+      // Build failure/review detail
+      const issues = [];
+      for (const f of r.fields) {
+        if (f.status !== "match") {
+          const detail = f.note ? `${f.field}: ${f.note}` : `${f.field}: expected "${f.expected}", found "${f.found ?? "not found"}"`;
+          issues.push(detail);
+        }
+      }
+      if (r.government_warning.status !== "match") {
+        const wIssues = r.government_warning.issues.length
+          ? r.government_warning.issues.join("; ")
+          : "government warning mismatch";
+        issues.push(`Government warning: ${wIssues}`);
+      }
+      const prefix = r.overall === "needs_review" ? "needs_review" : "fail";
+      rows.push([key, brand, `${prefix}: ${issues.join(" | ")}`]);
+    }
+    const csv = rows.map(row =>
+      row.map(cell => `"${String(cell).replace(/"/g, '""')}"`).join(",")
+    ).join("\n");
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
+    a.download = `verification_results_${new Date().toISOString().slice(0,10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+  });
 
   /* ---------- banners ---------- */
   function showError(msg) { const b = $("error-banner"); b.style.display = msg ? "block" : "none"; b.textContent = msg || ""; }
